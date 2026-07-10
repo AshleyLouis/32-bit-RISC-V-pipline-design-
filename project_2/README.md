@@ -1,5 +1,10 @@
 # EGO1 RV32I SoC
 
+**Docs:** [`NEXT_STEPS.md`](NEXT_STEPS.md) — how to build/sim/program/flash and
+extend the project (start here to continue work) · [`DEMO_GUIDE.md`](DEMO_GUIDE.md)
+— the in-class demo · [`HARDWARE_STATUS.md`](HARDWARE_STATUS.md) — verified state ·
+[`EGO1_RISCV_SOC_PLAN.md`](EGO1_RISCV_SOC_PLAN.md) — architecture roadmap.
+
 This directory contains the first runnable baseline for the course project:
 
 - multi-cycle RV32I-subset CPU
