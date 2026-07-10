@@ -1,0 +1,531 @@
+EGO1 
+
+                                                              2018.04 ver2.1
+
+         
+                                                                                                                 EGO1 User Manual
+
+                                    
+
+1. ...........................................................................................................................................2
+2. FPGA..........................................................................................................................................2
+3. ...................................................................................................................................3
+4. ...................................................................................................................................3
+5. FPGA .................................................................................................................................3
+6.  I/O  ...........................................................................................................................4
+
+      6.1  ...................................................................................................................................4
+      6.2  ...................................................................................................................................5
+      6.3 LED ..................................................................................................................................6
+      6.4 .........................................................................................................................7
+7. VGA ...................................................................................................................................9
+8. .................................................................................................................................10
+9. USB-UART/JTAG  ..............................................................................................................11
+10. USB  PS2  .................................................................................................................11
+11. SRAM ..........................................................................................................................12
+12. .....................................................................................................................14
+13. DAC .....................................................................................................................16
+14. .............................................................................................................................17
+15.  I/O ......................................................................................................................18
+
+                    1  Xilinx 
+www.e-elements.com
+                                                     EGO1 User Manual
+
+1. 
+
+      EGO1  Xilinx Artix-7 FPGA 
+EGO1  FPGA (XC7A35T-1CSG324C)
+ FPGA  MicroBlaze 
+ SoC 
+
+
+
+                                                   
+1  VGA                   10  1 
+2                        11  1  DAC 
+3  USB-UART/JTAG         12  SRAM 
+4  USB  PS2              13  SPI FLASH 
+5  2  4                  14  
+6  16  LED               15  
+7  8 
+8  1  8  DIP 
+9  5 
+
+2. FPGA
+
+EGO1  Xilinx Artix-7  XC7A35T-1CSG324C FPGA
+
+                         2   Xilinx 
+www.e-elements.com
+                               EGO1 User Manual
+
+3. 
+
+     EGo1 Type-C EGo1  Type-C
+ UART  JTAG
+ Type-C  5V 
+ LED D18
+
+4. 
+
+      EGO1  100MHz  FPGA 
+P17 FPGA 
+ MMCM 
+
+                                       FPGA IO PIN
+                    SYS_CLK    P17
+
+5. FPGA 
+
+EES328  FPGA FPGA
+ USB  UART/JTAG  J6
+ 6-pin JTAG  J3
+ SPI Flash 
+
+FPGA .bit  bit
+ FPGA  Vivado BIT 
+
+
+                    3          Xilinx 
+www.e-elements.com
+                                                                                                                 EGO1 User Manual
+
+ SPI Flash  FPGA  Flash Xilinx 
+ Vivado  Flash  SPI Flash  N25Q32
+3.3V FPGA  D24 
+
+6.  I/O 
+
+      I/O  2 5 8 1  8
+ DIP 16  LED 8 
+
+6.1 
+
+      RSTS6 FPGA  PROGS5
+RST 
+
+                    4  Xilinx 
+www.e-elements.com
+                                       EGO1 User Manual
+
+                                               FPGA IO PIN
+                           FPGA_RESET  P15
+
+
+
+                                           FPGA IO PIN
+                           PB0         R11
+                           PB1         R17
+                S0         PB2         R15
+                S1         PB3         V1
+                S2         PB4         U4
+                S3
+                S4
+
+6.2 
+
+      8  8  DIP 
+
+                           5           Xilinx 
+www.e-elements.com
+                                                      EGO1 User Manual
+                     SW_0
+                     SW_1         FPGA IO PIN
+         SW0         SW_2     P5
+         SW1         SW_3     P4
+         SW2         SW_4     P3
+         SW3         SW_5     P2
+         SW4         SW_6     R2
+         SW5         SW_7     M4
+         SW6         SW_DIP0  N4
+         SW7         SW_DIP1  R1
+                     SW_DIP2  U3
+         SW8         SW_DIP3  U2
+                     SW_DIP4  V2
+                     SW_DIP5  V5
+                     SW_DIP6  V4
+                     SW_DIP7  R3
+                              T3
+                              T5
+
+6.3 LED 
+
+LED  FPGA 
+
+                     6        Xilinx 
+www.e-elements.com
+                                                EGO1 User Manual
+
+                                   FPGA IO PIN           
+                    LED0       F6               Green
+                    LED1       G4               Green
+D0                  LED2       G3               Green
+D1                  LED3       J4               Green
+D2                  LED4       H4               Green
+D3                  LED5       J3               Green
+D4                  LED6       J2               Green
+D5                  LED7       K2               Green
+D6                  LED8       K1               Green
+D7                  LED9       H6               Green
+D8                  LED10      H5               Green
+D9                  LED11      J5               Green
+D10                 LED12      K6               Green
+D11                 LED13      L1               Green
+D12                 LED14      M1               Green
+D13                 LED15      K3               Green
+D14
+D15
+
+6.4 
+
+     FPGA
+
+FPGA 
+
+                            7                   Xilinx 
+www.e-elements.com
+                                     EGO1 User Manual
+
+                                         FPGA IO PIN
+                           LED0_CA   B4
+                           LED0_CB   A4
+                A0         LED0_CC   A3
+                B0         LED0_CD   B1
+                C0         LED0_CE   A1
+                D0         LED0_CF   B3
+                E0         LED0_CG   B2
+                F0         LED0_DP   D5
+                G0         LED1_CA   D4
+                DP0        LED1_CB   E3
+                A1         LED1_CC   D3
+                B1         LED1_CD   F4
+                C1         LED1_CE   F3
+                D1         LED1_CF   E2
+                E1         LED1_CG   D2
+                F1         LED1_DP   H2
+                G1         LED_BIT1  G2
+                DP1        LED_BIT2  C2
+                DN0_K1     LED_BIT3  C1
+                DN0_K2     LED_BIT4  H1
+                DN0_K3     LED_BIT5  G1
+                DN0_K4     LED_BIT6  F1
+                DN1_K1     LED_BIT7  E1
+                DN1_K2     LED_BIT8  G6
+                DN1_K3
+                DN1_K4
+
+                           8         Xilinx 
+www.e-elements.com
+                                             EGO1 User Manual
+
+7. VGA 
+
+      EGO1  VGA J1 14  FPGA 
+ 4 
+
+                                                 FPGA IO PIN
+                           VGA_R0            F5
+                           VGA_R1            C6
+                RED        VGA_R2            C5
+                           VGA_R3            B7
+                GREEN      VGA_G0            B6
+                           VGA_G1            A6
+                BLUE       VGA_G2            A5
+                           VGA_G3            D8
+                H-SYNC     VGA_B0            C7
+                V-SYNC     VGA_B1            E6
+                           VGA_B2            E5
+                           VGA_B3            E7
+www.e-elements.com         VGA_HSYNC         D7
+                           VGA_VSYNC         C4
+
+                                          9                     Xilinx 
+                        EGO1 User Manual
+
+8. 
+
+      EGO1 J12
+AUDIO_PWM FPGA PWM
+PDM
+
+
+
+
+     
+
+ 3dB
+
+10% Vdd 
+
+ PWM 
+
+      3dB  PWM  PWM 
+ 5KHz 
+ PWM  50KHz 
+PWM  PWM 
+ Vdd  PWM 
+
+
+                    10  Xilinx 
+www.e-elements.com
+                                        EGO1 User Manual
+
+                                            FPGA IO PIN
+                           AUDIO_PWM    T1
+                           AUDIO_SD#    M6
+                AUDIO PWM
+                AUDIO SD
+
+9. USB-UART/JTAG 
+
+       UART/JTAG  USB  USB
+ PC  USB  Xilinx  Vivado 
+
+
+:                                               FPGA IO PIN
+                           UART_RX      T4 FPGA 
+                           UART_TX      N5 FPGA 
+ UART RX
+ UART TX
+
+      UATR 
+""
+RXDTXD
+
+
+       1 
+ 8 
+
+
+
+
+UART 
+
+10.USB  PS2 
+
+EGO1  USB 
+
+                           11           Xilinx 
+www.e-elements.com
+                                                                                                                 EGO1 User Manual
+
+ USB  J4 USB  PIC24FJ128
+ PS/2  USB 
+ PS/2  FPGA 
+
+                                         FPGA IO PIN
+       PIC24FJ128   PS2_CLK      K5
+                    PS2_DATA     L4
+ 15
+ 12
+
+11.SRAM 
+
+       IS61WV12816BLL SRAM  8Mbit SRAM 
+ SRAM 8ns
+
+                    12           Xilinx 
+www.e-elements.com
+                                       EGO1 User Manual
+
+SRAM  SRAM 
+
+SRAM  SRAM 
+
+                                            FPGA IO PIN
+                    MEM_D0             U17
+          SRAM      MEM_D1             U18
+ I/O0               MEM_D2             U16
+ I/O1               MEM_D3             V17
+ I/O2               MEM_D4             T11
+ I/O3               MEM_D5             U11
+ I/O4               MEM_D6             U12
+ I/O5               MEM_D7             V12
+ I/O6               MEM_D8             V10
+ I/O7               MEM_D9             V11
+ I/O8               MEM_D10            U14
+ I/O9               MEM_D11            V14
+ I/O10              MEM_D12            T13
+ I/O11
+ I/O12                             13           Xilinx 
+
+
+www.e-elements.com
+I/O13               MEM_D13               EGO1 User Manual
+I/O14               MEM_D14
+I/O15               MEM_D15   U13
+A00                 MEM_A00   T9
+A01                 MEM_A01   T10
+A02                 MEM_A02   T15
+A03                 MEM_A03   T14
+A04                 MEM_A04   N16
+A05                 MEM_A05   N15
+A06                 MEM_A06   M17
+A07                 MEM_A07   M16
+A08                 MEM_A08   P18
+A09                 MEM_A09   N17
+A10                 MEM_A10   P14
+A11                 MEM_A11   N14
+A12                 MEM_A12   T18
+A13                 MEM_A13   R18
+A14                 MEM_A14   M13
+A15                 MEM_A15   R13
+A16                 MEM_A16   R12
+A17                 MEM_A17   M18
+A18                 MEM_A18   L18
+OE                  SRAM_OE#  L16
+CE                  SRAM_CE#  L15
+WE                  SRAM_WE#  T16
+UB                  SRAM_UB   V15
+LB                  SRAM_LB   V16
+                              R16
+                              R10
+
+12. 
+
+      Xilinx 7  FPGA  12bit  1MSPS  ADC
+ 17 
+
+
+ XADC 
+
+                    14        Xilinx 
+www.e-elements.com
+                        EGO1 User Manual
+
+      XADC (VP/VN)
+ 16 ADxP  ADxNx  0  15
+
+      XADC 
+status registers
+ FPGA Dynamic Reconfiguration Port (DRP) 16
+ ADC  JTAG TAP 
+ XADC  FPGA JTAG 
+ XADC XADC 
+ XADC 
+
+
+      XADC  DRP  JTAG 
+ XADC block attributes
+ 41H  SEQ3  SEQ0 
+
+      XADC  FPGA JTAG  XADC
+ XADC  FPGA 
+ ZYNQ  PS  ADC  XADC 
+ug480_7Series_XADC.pdf
+
+      EGO1 W1 FPGA 
+ 0 ~ 1V  FPGA  C12 
+
+                    15  Xilinx 
+www.e-elements.com
+                        EGO1 User Manual
+
+ 1  ADC
+
+13.DAC 
+
+      EGO1  8 DAC0832DAC 
+ J2 
+
+ DAC0832  DAC0832 
+
+                    16  Xilinx 
+www.e-elements.com
+                                 EGO1 User Manual
+
+:                                     FPGA IO PIN
+                    DAC_D0       T8
+        DAC0832     DAC_D1       R8
+ DI0                DAC_D2       T6
+ DI1                DAC_D3       R7
+ DI2                DAC_D4       U6
+ DI3                DAC_D5       U7
+ DI4                DAC_D6       V9
+ DI5                DAC_D7       U9
+ DI6                DAC_BYTE2    R5
+ DI7                DAC_CS#      N6
+ ILE(BYTE2)         DAC_WR1#     V6
+ CS                 DAC_WR2#     R6
+ WR1                DAC_XFER#    V7
+ WR2
+ XFER
+
+14. 
+
+      EGO1 BLE-CC41-AFPGA 
+ 120024004800960014400192003840057600115200
+ 230400bps 9600bps AT 
+
+                    17           Xilinx 
+www.e-elements.com
+                                 EGO1 User Manual
+
+:                                        FPGA IO PIN
+      BLE-CC41-A    BT_RX        N2 FPGA 
+                    BT_TX        L3 FPGA 
+ UART_RX
+ UART_TX
+
+15. I/O
+
+      EGO1 J5 I/O  32
+ IO IO 
+
+                    18           Xilinx 
+www.e-elements.com
+                                            EGO1 User Manual
+
+                                            FPGA IO PIN
+ 2x18               AD2P_15                 B16
+                    AD2N_15                 B17
+ 1                  AD10P_15                A15
+ 2                  AD10N_15                A16
+ 3                  AD3P_15                 A13
+ 4                  AD3N_15                 A14
+ 5                  AD11P_15                B18
+ 6                  AD11N_15                A18
+ 7                  AD9P_15                 F13
+ 8                  AD9N_15                 F14
+ 9                  AD8P_15                 B13
+ 10                 AD8N_15                 B14
+ 11                 AD0P_15                 D14
+ 12                 AD0N_15                 C14
+ 13                 IO_L4P                  B11
+ 14                 IO_L4N                  A11
+ 15                 IO_L11P                 E15
+ 16                 IO_L11N                 E16
+ 17                 IO_L12P                 D15
+ 18                 IO_L12N                 C15
+ 19                 IO_L13P                 H16
+ 20                 IO_L13N                 G16
+ 21                 IO_L14P                 F15
+ 22
+ 23                                     19                Xilinx 
+
+
+www.e-elements.com
+                                      EGO1 User Manual
+
+24                  IO_L14N      F16
+
+25                  IO_L15P      H14
+
+26                  IO_L15N      G14
+
+27                  IO_L16P      E17
+
+28                  IO_L16N      D17
+
+29                  IO_L17P      K13
+
+30                  IO_L17N      J13
+
+31                  IO_L18P      H17
+
+32                  IO_L18N      G17
+
+                             20       Xilinx 
+www.e-elements.com
+

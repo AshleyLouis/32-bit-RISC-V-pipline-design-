@@ -1,0 +1,40 @@
+# ---- Claude Code / agent tooling ----
+.claude/
+.agents/
+
+# ---- Vendored reference (has its own git history) ----
+/picorv32/
+
+# ---- ModelSim: install symlink + local compile artifacts ----
+/modelsim106e
+**/work/
+**/transcript
+**/modelsim.ini
+**/*.wlf
+
+# ---- Xilinx / Vivado runtime + generated project dirs ----
+**/.Xil/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+.Xil/
+
+# ---- Logs / journals ----
+*.log
+*.jou
+*.backup.jou
+*.backup.log
+
+# ---- Simulation waveforms & build outputs (regenerable from source) ----
+*.vcd
+*.bit
+*.mcs
+*.prm
+*.bin
+*.ltx
+*.rpt
+
+# ---- Large vendor document ----
+*.pdf
