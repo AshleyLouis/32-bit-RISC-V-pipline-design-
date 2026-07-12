@@ -1,5 +1,14 @@
 `timescale 1ns / 1ps
 
+// RV32I 5-stage pipeline core with M-mode interrupts/exceptions.
+// See INTERRUPT_DESIGN.md for the precise-interrupt scheme:
+//  - async IRQs (timer/external) are injected at the IF/ID boundary: the ID
+//    instruction is squashed and mepc = its PC, so it simply re-executes after
+//    mret (avoids a double-fault if that instruction would itself trap).
+//  - sync exceptions (illegal/ecall/ebreak) and mret resolve in EX, reusing the
+//    branch-flush squash path, with mepc = the faulting instruction's PC.
+//  - CSR ops read at EX (with rs1 forwarding) and commit their write as they
+//    leave EX, which serialises back-to-back CSR access with no extra stall.
 module rv32_core_pipeline (
     input  wire        clk,
     input  wire        resetn,
@@ -14,7 +23,10 @@ module rv32_core_pipeline (
     output wire [3:0]  mem_wstrb,
     input  wire [31:0] mem_rdata,
 
-    output reg         trap,
+    input  wire        irq_timer,     // -> mip.MTIP
+    input  wire        irq_external,  // -> mip.MEIP
+
+    output wire        trap,          // fatal halt (trap taken while mtvec == 0)
     output wire        retire_valid,
     output wire        mem_wait,
     output reg  [31:0] stall_counter,
@@ -29,6 +41,7 @@ module rv32_core_pipeline (
     localparam OPCODE_STORE  = 7'b0100011;
     localparam OPCODE_IMM    = 7'b0010011;
     localparam OPCODE_REG    = 7'b0110011;
+    localparam OPCODE_SYSTEM = 7'b1110011;
 
     localparam ALU_ADD  = 4'd0;
     localparam ALU_SUB  = 4'd1;
@@ -40,6 +53,22 @@ module rv32_core_pipeline (
     localparam ALU_SRA  = 4'd7;
     localparam ALU_SLT  = 4'd8;
     localparam ALU_SLTU = 4'd9;
+
+    // CSR addresses.
+    localparam CSR_MSTATUS  = 12'h300;
+    localparam CSR_MIE      = 12'h304;
+    localparam CSR_MTVEC    = 12'h305;
+    localparam CSR_MSCRATCH = 12'h340;
+    localparam CSR_MEPC     = 12'h341;
+    localparam CSR_MCAUSE   = 12'h342;
+    localparam CSR_MIP      = 12'h344;
+
+    // mcause codes.
+    localparam CAUSE_ILLEGAL   = 32'd2;
+    localparam CAUSE_BREAK     = 32'd3;
+    localparam CAUSE_ECALL_M   = 32'd11;
+    localparam CAUSE_IRQ_TIMER = 32'h8000_0007;
+    localparam CAUSE_IRQ_EXT   = 32'h8000_000B;
 
     reg [31:0] pc;
     assign instr_addr = pc;
@@ -54,6 +83,7 @@ module rv32_core_pipeline (
     wire [4:0] id_rs1 = if_id_instr[19:15];
     wire [4:0] id_rs2 = if_id_instr[24:20];
     wire [6:0] id_funct7 = if_id_instr[31:25];
+    wire [11:0] id_csr_addr = if_id_instr[31:20];
 
     wire [31:0] id_imm_i = {{20{if_id_instr[31]}}, if_id_instr[31:20]};
     wire [31:0] id_imm_s = {{20{if_id_instr[31]}}, if_id_instr[31:25], if_id_instr[11:7]};
@@ -100,6 +130,16 @@ module rv32_core_pipeline (
     reg        id_ex_lui;
     reg        id_ex_auipc;
     reg        id_ex_illegal;
+    // CSR / system controls carried into EX.
+    reg        id_ex_is_csr;
+    reg        id_ex_csr_we;
+    reg [11:0] id_ex_csr_addr;
+    reg [2:0]  id_ex_csr_funct3;
+    reg        id_ex_csr_use_imm;
+    reg [4:0]  id_ex_csr_uimm;
+    reg        id_ex_ecall;
+    reg        id_ex_ebreak;
+    reg        id_ex_mret;
 
     reg        ex_mem_valid;
     reg [31:0] ex_mem_alu_result;
@@ -110,13 +150,30 @@ module rv32_core_pipeline (
     reg        ex_mem_mem_read;
     reg        ex_mem_mem_write;
     reg        ex_mem_mem_to_reg;
-    reg        ex_mem_illegal;
 
     reg        mem_wb_valid;
     reg [31:0] mem_wb_wb_data;
     reg [4:0]  mem_wb_rd;
     reg        mem_wb_reg_write;
-    reg        mem_wb_illegal;
+
+    reg        halted;
+    assign trap = halted;
+
+    // ---- M-mode CSR state --------------------------------------------------
+    reg        mstatus_mie;   // mstatus.MIE  (bit 3)
+    reg        mstatus_mpie;  // mstatus.MPIE (bit 7)
+    reg        mie_mtie;      // mie.MTIE (bit 7)
+    reg        mie_meie;      // mie.MEIE (bit 11)
+    reg [31:0] mtvec;
+    reg [31:0] mepc;
+    reg [31:0] mcause;
+    reg [31:0] mscratch;
+    // mip is not stored: its bits reflect the live IRQ lines (level-sensitive).
+    wire       mip_mtip = irq_timer;
+    wire       mip_meip = irq_external;
+
+    // CSR reads use an explicit combinational mux at the EX stage (ex_csr_old);
+    // see the note there for why a function-call wire would read stale values.
 
     wire [31:0] id_rs1_value = (mem_wb_valid && mem_wb_reg_write && mem_wb_rd != 5'd0 && mem_wb_rd == id_rs1) ?
             mem_wb_wb_data : rf_rdata1;
@@ -126,7 +183,7 @@ module rv32_core_pipeline (
     assign rf_we = mem_wb_valid && mem_wb_reg_write && mem_wb_rd != 5'd0;
     assign rf_waddr = mem_wb_rd;
     assign rf_wdata = mem_wb_wb_data;
-    assign retire_valid = mem_wb_valid && !mem_wb_illegal;
+    assign retire_valid = mem_wb_valid;
 
     assign mem_valid = ex_mem_valid && (ex_mem_mem_read || ex_mem_mem_write);
     assign mem_addr = ex_mem_alu_result;
@@ -183,6 +240,7 @@ module rv32_core_pipeline (
         end
     endfunction
 
+    // PLACEHOLDER_DECODE
     reg [3:0]  dec_alu_op;
     reg [31:0] dec_imm;
     reg        dec_alu_src_imm;
@@ -196,6 +254,12 @@ module rv32_core_pipeline (
     reg        dec_lui;
     reg        dec_auipc;
     reg        dec_illegal;
+    reg        dec_is_csr;
+    reg        dec_csr_we;
+    reg        dec_csr_use_imm;
+    reg        dec_ecall;
+    reg        dec_ebreak;
+    reg        dec_mret;
 
     always @* begin
         dec_alu_op = ALU_ADD;
@@ -211,6 +275,12 @@ module rv32_core_pipeline (
         dec_lui = 1'b0;
         dec_auipc = 1'b0;
         dec_illegal = 1'b0;
+        dec_is_csr = 1'b0;
+        dec_csr_we = 1'b0;
+        dec_csr_use_imm = 1'b0;
+        dec_ecall = 1'b0;
+        dec_ebreak = 1'b0;
+        dec_mret = 1'b0;
 
         case (id_opcode)
             OPCODE_LUI: begin
@@ -285,12 +355,38 @@ module rv32_core_pipeline (
                 endcase
                 dec_illegal = !valid_reg_alu(id_funct3, id_funct7);
             end
+            OPCODE_SYSTEM: begin
+                if (id_funct3 == 3'b000) begin
+                    // PRIV: ecall / ebreak / mret (rd=rs1=0).
+                    case (if_id_instr[31:20])
+                        12'h000: dec_ecall  = 1'b1;
+                        12'h001: dec_ebreak = 1'b1;
+                        12'h302: dec_mret   = 1'b1;
+                        default: dec_illegal = 1'b1;
+                    endcase
+                end else if (id_funct3 == 3'b100) begin
+                    dec_illegal = 1'b1;             // no funct3=100 CSR op
+                end else begin
+                    // csrrw/csrrs/csrrc and immediate variants.
+                    dec_is_csr = 1'b1;
+                    dec_reg_write = 1'b1;           // rd <- old CSR (x0 filtered later)
+                    dec_csr_use_imm = id_funct3[2]; // funct3[2] set for *i forms
+                    // csrrw/csrrwi always write; set/clear write unless source is 0.
+                    if (id_funct3[1:0] == 2'b01)      // csrrw / csrrwi
+                        dec_csr_we = 1'b1;
+                    else if (id_funct3[2])            // csrrsi/csrrci: uimm != 0
+                        dec_csr_we = (id_rs1 != 5'd0);
+                    else                              // csrrs/csrrc: rs1 != x0
+                        dec_csr_we = (id_rs1 != 5'd0);
+                end
+            end
             default: begin
                 dec_illegal = 1'b1;
             end
         endcase
     end
 
+    // PLACEHOLDER_EX
     wire [31:0] ex_rs1_fwd = (ex_mem_valid && ex_mem_reg_write && ex_mem_rd != 5'd0 && ex_mem_rd == id_ex_rs1 && !ex_mem_mem_to_reg) ? ex_mem_wb_data :
                              (mem_wb_valid && mem_wb_reg_write && mem_wb_rd != 5'd0 && mem_wb_rd == id_ex_rs1) ? mem_wb_wb_data :
                              id_ex_rs1_data;
@@ -307,14 +403,62 @@ module rv32_core_pipeline (
         .y(ex_alu_y)
     );
 
+    // ---- CSR read / modify at EX ------------------------------------------
+    // Explicit mux (see csr_read note): keeps every CSR reg in the sensitivity
+    // list so a same-CSR write-then-read reflects the just-committed value.
+    reg [31:0] ex_csr_old;
+    always @* begin
+        case (id_ex_csr_addr)
+            CSR_MSTATUS:  ex_csr_old = {24'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
+            CSR_MIE:      ex_csr_old = {20'b0, mie_meie, 3'b0, mie_mtie, 7'b0};
+            CSR_MTVEC:    ex_csr_old = {mtvec[31:2], 2'b0};
+            CSR_MSCRATCH: ex_csr_old = mscratch;
+            CSR_MEPC:     ex_csr_old = {mepc[31:2], 2'b0};
+            CSR_MCAUSE:   ex_csr_old = mcause;
+            CSR_MIP:      ex_csr_old = {20'b0, mip_meip, 3'b0, mip_mtip, 7'b0};
+            default:      ex_csr_old = 32'h0000_0000;
+        endcase
+    end
+    wire [31:0] ex_csr_src = id_ex_csr_use_imm ? {27'b0, id_ex_csr_uimm} : ex_rs1_fwd;
+    wire [31:0] ex_csr_new = (id_ex_csr_funct3[1:0] == 2'b01) ? ex_csr_src :               // csrrw
+                             (id_ex_csr_funct3[1:0] == 2'b10) ? (ex_csr_old | ex_csr_src) : // csrrs
+                             (ex_csr_old & ~ex_csr_src);                                     // csrrc
+
     wire ex_branch_taken = id_ex_valid && !id_ex_illegal &&
             ((id_ex_branch && branch_taken(id_ex_funct3, ex_rs1_fwd, ex_rs2_fwd)) || id_ex_jump);
     wire [31:0] ex_branch_target = id_ex_jalr ? ((ex_rs1_fwd + id_ex_imm) & 32'hffff_fffe) :
             (id_ex_pc + id_ex_imm);
-    wire [31:0] ex_result = id_ex_lui ? id_ex_imm :
+    wire [31:0] ex_result = id_ex_is_csr ? ex_csr_old :
+            id_ex_lui ? id_ex_imm :
             id_ex_auipc ? (id_ex_pc + id_ex_imm) :
             id_ex_jump ? (id_ex_pc + 32'd4) :
             ex_alu_y;
+
+    // ---- EX-stage trap / redirect (older instruction, wins the PC) --------
+    wire ex_exception = id_ex_valid && (id_ex_illegal || id_ex_ecall || id_ex_ebreak);
+    wire [31:0] ex_cause = id_ex_illegal ? CAUSE_ILLEGAL :
+                           id_ex_ebreak  ? CAUSE_BREAK   :
+                                           CAUSE_ECALL_M;
+    wire ex_do_mret = id_ex_valid && id_ex_mret;
+    wire sys_in_ex = id_ex_valid && (id_ex_is_csr || id_ex_ecall || id_ex_ebreak || id_ex_mret);
+
+    // A trap taken with no handler installed (mtvec == 0) is fatal.
+    wire ex_fatal = ex_exception && (mtvec[31:2] == 30'd0);
+
+    wire ex_redirect = ex_branch_taken || (ex_exception && !ex_fatal) || ex_do_mret;
+    wire [31:0] ex_redirect_target = (ex_exception && !ex_fatal) ? {mtvec[31:2], 2'b0} :
+                                     ex_do_mret ? {mepc[31:2], 2'b0} :
+                                     ex_branch_target;
+
+    // ---- Async interrupt (injected at IF/ID) ------------------------------
+    wire irq_pending = mstatus_mie && ((mie_mtie && mip_mtip) || (mie_meie && mip_meip));
+    wire [31:0] irq_cause = (mie_meie && mip_meip) ? CAUSE_IRQ_EXT : CAUSE_IRQ_TIMER;
+    // Take an async IRQ only on the normal-advance path: no EX redirect, not
+    // stalling, and no system instruction in EX (so its mstatus write cannot
+    // race the trap-entry mstatus write). Fatal only when mtvec == 0.
+    wire irq_fatal = irq_pending && (mtvec[31:2] == 30'd0);
+    wire take_irq = irq_pending && !irq_fatal && !ex_redirect && !ex_fatal &&
+                    !load_use_hazard && !sys_in_ex;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -325,20 +469,27 @@ module rv32_core_pipeline (
             id_ex_valid <= 1'b0;
             ex_mem_valid <= 1'b0;
             mem_wb_valid <= 1'b0;
-            trap <= 1'b0;
+            halted <= 1'b0;
             stall_counter <= 32'd0;
             flush_counter <= 32'd0;
+            mstatus_mie <= 1'b0;
+            mstatus_mpie <= 1'b0;
+            mie_mtie <= 1'b0;
+            mie_meie <= 1'b0;
+            mtvec <= 32'h0000_0000;
+            mepc <= 32'h0000_0000;
+            mcause <= 32'h0000_0000;
+            mscratch <= 32'h0000_0000;
+        end else if (halted) begin
+            // Fatal trap: freeze the pipeline.
         end else begin
-            if (mem_wb_valid && mem_wb_illegal)
-                trap <= 1'b1;
-
+            // ---- older stages drain every cycle (exception squashes EX) ----
             mem_wb_valid <= ex_mem_valid;
             mem_wb_rd <= ex_mem_rd;
             mem_wb_reg_write <= ex_mem_reg_write;
-            mem_wb_illegal <= ex_mem_illegal;
             mem_wb_wb_data <= ex_mem_mem_to_reg ? mem_rdata : ex_mem_wb_data;
 
-            ex_mem_valid <= id_ex_valid;
+            ex_mem_valid <= id_ex_valid && !ex_exception;
             ex_mem_alu_result <= ex_result;
             ex_mem_store_data <= ex_rs2_fwd;
             ex_mem_wb_data <= ex_result;
@@ -347,16 +498,63 @@ module rv32_core_pipeline (
             ex_mem_mem_read <= id_ex_mem_read;
             ex_mem_mem_write <= id_ex_mem_write;
             ex_mem_mem_to_reg <= id_ex_mem_to_reg;
-            ex_mem_illegal <= id_ex_illegal;
 
-            if (ex_branch_taken) begin
-                pc <= ex_branch_target;
+            // ---- CSR write commit (as the CSR instr leaves EX) -------------
+            // Mutually exclusive with trap-entry writes below by construction
+            // (take_irq is gated on !sys_in_ex; ex_exception excludes CSR ops).
+            if (id_ex_valid && id_ex_csr_we) begin
+                case (id_ex_csr_addr)
+                    CSR_MSTATUS: begin
+                        mstatus_mie  <= ex_csr_new[3];
+                        mstatus_mpie <= ex_csr_new[7];
+                    end
+                    CSR_MIE: begin
+                        mie_mtie <= ex_csr_new[7];
+                        mie_meie <= ex_csr_new[11];
+                    end
+                    CSR_MTVEC:    mtvec    <= ex_csr_new;
+                    CSR_MSCRATCH: mscratch <= ex_csr_new;
+                    CSR_MEPC:     mepc     <= ex_csr_new;
+                    CSR_MCAUSE:   mcause   <= ex_csr_new;
+                    default: begin end   // mip and others: writes ignored
+                endcase
+            end
+
+            // ---- trap entry / mret CSR side effects ------------------------
+            if (ex_fatal || irq_fatal) begin
+                halted <= 1'b1;
+            end else if (ex_exception) begin
+                mepc   <= id_ex_pc;
+                mcause <= ex_cause;
+                mstatus_mpie <= mstatus_mie;
+                mstatus_mie  <= 1'b0;
+            end else if (take_irq) begin
+                mepc   <= if_id_valid ? if_id_pc : pc;
+                mcause <= irq_cause;
+                mstatus_mpie <= mstatus_mie;
+                mstatus_mie  <= 1'b0;
+            end else if (ex_do_mret) begin
+                mstatus_mie  <= mstatus_mpie;
+                mstatus_mpie <= 1'b1;
+            end
+
+            // ---- PC / IF / ID sequencing (priority order) ------------------
+            if (ex_redirect) begin
+                pc <= ex_redirect_target;
                 if_id_valid <= 1'b0;
                 id_ex_valid <= 1'b0;
                 flush_counter <= flush_counter + 32'd1;
             end else if (load_use_hazard) begin
                 id_ex_valid <= 1'b0;
                 stall_counter <= stall_counter + 32'd1;
+            end else if (take_irq) begin
+                // Inject the interrupt at IF/ID: squash the ID instruction
+                // (it re-executes after mret) and the in-flight fetch, and
+                // redirect to the trap vector. Older stages already drain.
+                pc <= {mtvec[31:2], 2'b0};
+                if_id_valid <= 1'b0;
+                id_ex_valid <= 1'b0;
+                flush_counter <= flush_counter + 32'd1;
             end else begin
                 pc <= pc + 32'd4;
                 if_id_valid <= 1'b1;
@@ -384,7 +582,18 @@ module rv32_core_pipeline (
                 id_ex_lui <= dec_lui;
                 id_ex_auipc <= dec_auipc;
                 id_ex_illegal <= dec_illegal;
+                id_ex_is_csr <= dec_is_csr;
+                id_ex_csr_we <= dec_csr_we;
+                id_ex_csr_addr <= id_csr_addr;
+                id_ex_csr_funct3 <= id_funct3;
+                id_ex_csr_use_imm <= dec_csr_use_imm;
+                id_ex_csr_uimm <= id_rs1;
+                id_ex_ecall <= dec_ecall;
+                id_ex_ebreak <= dec_ebreak;
+                id_ex_mret <= dec_mret;
             end
         end
     end
 endmodule
+
+

@@ -21,7 +21,9 @@ module top_ego1 #(
 
     rv32_soc #(
         .BRAM_WORDS(8192),
-        .INIT_FILE(INIT_FILE)
+        .INIT_FILE(INIT_FILE),
+        .CLK_FREQ(100_000_000),   // multi-cycle SoC runs at the full 100 MHz
+        .BAUD_RATE(9600)
     ) soc (
         .clk(clk),
         .resetn(resetn),
@@ -31,11 +33,10 @@ module top_ego1 #(
         .seg0(seg0),
         .seg1(seg1),
         .seg_sel(seg_sel),
+        .uart_rx_pin(uart_rx),
+        .uart_tx_pin(uart_tx),
         .trap(trap)
     );
 
-    assign uart_tx = 1'b1;
-
-    wire unused_uart_rx = uart_rx;
     wire unused_trap = trap;
 endmodule

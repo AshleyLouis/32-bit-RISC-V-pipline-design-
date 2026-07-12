@@ -2,7 +2,9 @@
 
 module rv32_soc #(
     parameter integer BRAM_WORDS = 8192,
-    parameter INIT_FILE = ""
+    parameter INIT_FILE = "",
+    parameter integer CLK_FREQ = 100_000_000,
+    parameter integer BAUD_RATE = 9600
 ) (
     input  wire        clk,
     input  wire        resetn,
@@ -12,6 +14,8 @@ module rv32_soc #(
     output wire [7:0]  seg0,
     output wire [7:0]  seg1,
     output wire [7:0]  seg_sel,
+    input  wire        uart_rx_pin,
+    output wire        uart_tx_pin,
     output wire        trap
 );
     wire        cpu_mem_valid;
@@ -23,6 +27,10 @@ module rv32_soc #(
     wire        cpu_retire;
     wire        cpu_mem_wait;
 
+    wire        irq_timer;
+    wire        uart_irq;
+    wire        irq_external = uart_irq;
+
     rv32_core_multicycle cpu (
         .clk(clk),
         .resetn(resetn),
@@ -32,6 +40,8 @@ module rv32_soc #(
         .mem_wdata(cpu_mem_wdata),
         .mem_wstrb(cpu_mem_wstrb),
         .mem_rdata(cpu_mem_rdata),
+        .irq_timer(irq_timer),
+        .irq_external(irq_external),
         .trap(trap),
         .retire_valid(cpu_retire),
         .mem_wait(cpu_mem_wait)
@@ -40,7 +50,11 @@ module rv32_soc #(
     wire bram_sel = cpu_mem_valid && (cpu_mem_addr[31:15] == 17'h00000);
     wire gpio_sel = cpu_mem_valid && (cpu_mem_addr[31:4] == 28'h1000000);
     wire perf_sel = cpu_mem_valid && (cpu_mem_addr[31:4] == 28'h1000001);
-    wire unmapped_sel = cpu_mem_valid && !bram_sel && !gpio_sel && !perf_sel;
+    wire uart_sel = cpu_mem_valid && (cpu_mem_addr[31:4] == 28'h1000003);
+    wire clint_sel = cpu_mem_valid && (cpu_mem_addr[31:4] == 28'h1000004);
+    wire irqst_sel = cpu_mem_valid && (cpu_mem_addr[31:4] == 28'h1000005);
+    wire unmapped_sel = cpu_mem_valid && !bram_sel && !gpio_sel && !perf_sel &&
+                        !uart_sel && !clint_sel && !irqst_sel;
 
     wire        bram_ready;
     wire [31:0] bram_rdata;
@@ -112,13 +126,36 @@ module rv32_soc #(
         end
     end
 
+    // ---- interrupt peripherals (combinational read, ready == select) ------
+    wire [31:0] uart_rdata;
+    soc_uart #(.CLK_FREQ(CLK_FREQ), .BAUD_RATE(BAUD_RATE)) uart (
+        .clk(clk), .resetn(resetn),
+        .valid(uart_sel), .addr(cpu_mem_addr[3:0]),
+        .wdata(cpu_mem_wdata), .wstrb(cpu_mem_wstrb), .rdata(uart_rdata),
+        .rx_pin(uart_rx_pin), .tx_pin(uart_tx_pin), .irq(uart_irq)
+    );
+
+    wire [31:0] clint_rdata;
+    soc_clint clint (
+        .clk(clk), .resetn(resetn),
+        .valid(clint_sel), .addr(cpu_mem_addr[3:0]),
+        .wdata(cpu_mem_wdata), .wstrb(cpu_mem_wstrb), .rdata(clint_rdata),
+        .irq_timer(irq_timer)
+    );
+
+    wire [31:0] irq_status = {30'b0, irq_timer, uart_irq};
+
     assign cpu_mem_ready = (bram_sel && bram_ready) ||
                            (gpio_sel && gpio_ready) ||
                            (perf_sel && perf_ready) ||
+                           uart_sel || clint_sel || irqst_sel ||
                            unmapped_sel;
 
     assign cpu_mem_rdata = bram_sel ? bram_rdata :
                             gpio_sel ? gpio_rdata :
                             perf_sel ? perf_rdata :
+                            uart_sel ? uart_rdata :
+                            clint_sel ? clint_rdata :
+                            irqst_sel ? irq_status :
                             32'hbad0_add0;
 endmodule

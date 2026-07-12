@@ -39,7 +39,9 @@ module top_ego1_pipeline #(
 
     rv32_soc_pipeline #(
         .BRAM_WORDS(8192),
-        .INIT_FILE(INIT_FILE)
+        .INIT_FILE(INIT_FILE),
+        .CLK_FREQ(50_000_000),   // cpu_clk is the 50 MHz divided clock
+        .BAUD_RATE(9600)
     ) soc (
         .clk(cpu_clk),
         .resetn(resetn),
@@ -49,11 +51,10 @@ module top_ego1_pipeline #(
         .seg0(seg0),
         .seg1(seg1),
         .seg_sel(seg_sel),
+        .uart_rx_pin(uart_rx),
+        .uart_tx_pin(uart_tx),
         .trap(trap)
     );
 
-    assign uart_tx = 1'b1;
-
-    wire unused_uart_rx = uart_rx;
     wire unused_trap = trap;
 endmodule

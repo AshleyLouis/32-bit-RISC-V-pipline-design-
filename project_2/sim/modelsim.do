@@ -11,6 +11,10 @@ vlog -work work +acc=rn rtl/rv32_regfile.v
 vlog -work work +acc=rn rtl/rv32_core_multicycle.v
 vlog -work work +acc=rn rtl/soc_bram.v
 vlog -work work +acc=rn rtl/soc_gpio.v
+vlog -work work +acc=rn rtl/uart_rx.v
+vlog -work work +acc=rn rtl/uart_tx.v
+vlog -work work +acc=rn rtl/soc_uart.v
+vlog -work work +acc=rn rtl/soc_clint.v
 vlog -work work +acc=rn rtl/rv32_soc.v
 vlog -work work +acc=rn sim/tb_rv32_soc.v
 

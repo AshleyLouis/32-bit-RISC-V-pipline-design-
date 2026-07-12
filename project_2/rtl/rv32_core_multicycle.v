@@ -11,6 +11,9 @@ module rv32_core_multicycle (
     output wire [3:0]  mem_wstrb,
     input  wire [31:0] mem_rdata,
 
+    input  wire        irq_timer,
+    input  wire        irq_external,
+
     output reg         trap,
     output wire        retire_valid,
     output wire        mem_wait
@@ -31,6 +34,7 @@ module rv32_core_multicycle (
     localparam OPCODE_STORE  = 7'b0100011;
     localparam OPCODE_IMM    = 7'b0010011;
     localparam OPCODE_REG    = 7'b0110011;
+    localparam OPCODE_SYSTEM = 7'b1110011;
 
     localparam ALU_ADD  = 4'd0;
     localparam ALU_SUB  = 4'd1;
@@ -42,6 +46,20 @@ module rv32_core_multicycle (
     localparam ALU_SRA  = 4'd7;
     localparam ALU_SLT  = 4'd8;
     localparam ALU_SLTU = 4'd9;
+
+    // CSR addresses / cause codes (see INTERRUPT_DESIGN.md).
+    localparam CSR_MSTATUS  = 12'h300;
+    localparam CSR_MIE      = 12'h304;
+    localparam CSR_MTVEC    = 12'h305;
+    localparam CSR_MSCRATCH = 12'h340;
+    localparam CSR_MEPC     = 12'h341;
+    localparam CSR_MCAUSE   = 12'h342;
+    localparam CSR_MIP      = 12'h344;
+    localparam CAUSE_ILLEGAL   = 32'd2;
+    localparam CAUSE_BREAK     = 32'd3;
+    localparam CAUSE_ECALL_M   = 32'd11;
+    localparam CAUSE_IRQ_TIMER = 32'h8000_0007;
+    localparam CAUSE_IRQ_EXT   = 32'h8000_000B;
 
     reg [2:0]  state;
     reg [31:0] pc;
@@ -55,12 +73,25 @@ module rv32_core_multicycle (
     reg [31:0] wb_data;
     reg        wb_we;
 
+    // ---- M-mode CSR state -------------------------------------------------
+    reg        mstatus_mie;
+    reg        mstatus_mpie;
+    reg        mie_mtie;
+    reg        mie_meie;
+    reg [31:0] mtvec;
+    reg [31:0] mepc;
+    reg [31:0] mcause;
+    reg [31:0] mscratch;
+    wire       mip_mtip = irq_timer;
+    wire       mip_meip = irq_external;
+
     wire [6:0] opcode = instr[6:0];
     wire [2:0] funct3 = instr[14:12];
     wire [6:0] funct7 = instr[31:25];
     wire [4:0] rd     = instr[11:7];
     wire [4:0] rs1    = instr[19:15];
     wire [4:0] rs2    = instr[24:20];
+    wire [11:0] csr_addr = instr[31:20];
 
     wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]};
     wire [31:0] imm_s = {{20{instr[31]}}, instr[31:25], instr[11:7]};
@@ -104,6 +135,38 @@ module rv32_core_multicycle (
 
     assign retire_valid = (state == S_WB);
     assign mem_wait = mem_valid && !mem_ready;
+
+    // ---- CSR read + IRQ evaluation ----------------------------------------
+    // Explicit combinational mux (not a function-call wire): keeps every CSR
+    // reg in the sensitivity list so a write-then-read of the same CSR sees
+    // the updated value (a function-call assign only re-evaluates when its
+    // argument changes, and csr_addr stays constant across such a pair).
+    reg [31:0] csr_old;
+    always @* begin
+        case (csr_addr)
+            CSR_MSTATUS:  csr_old = {24'b0, mstatus_mpie, 3'b0, mstatus_mie, 3'b0};
+            CSR_MIE:      csr_old = {20'b0, mie_meie, 3'b0, mie_mtie, 7'b0};
+            CSR_MTVEC:    csr_old = {mtvec[31:2], 2'b0};
+            CSR_MSCRATCH: csr_old = mscratch;
+            CSR_MEPC:     csr_old = {mepc[31:2], 2'b0};
+            CSR_MCAUSE:   csr_old = mcause;
+            CSR_MIP:      csr_old = {20'b0, mip_meip, 3'b0, mip_mtip, 7'b0};
+            default:      csr_old = 32'h0000_0000;
+        endcase
+    end
+
+    wire        csr_use_imm = funct3[2];
+    wire [31:0] csr_src = csr_use_imm ? {27'b0, rs1} : rs1_rdata;
+    wire [31:0] csr_new = (funct3[1:0] == 2'b01) ? csr_src :
+                          (funct3[1:0] == 2'b10) ? (csr_old | csr_src) :
+                          (csr_old & ~csr_src);
+    wire        csr_we = (funct3[1:0] == 2'b01) ? 1'b1 : (rs1 != 5'd0);
+
+    // Interrupt pending & takeable: evaluated at the instruction boundary
+    // (S_FETCH). Only one instruction is ever in flight, so this is precise.
+    wire irq_pending = mstatus_mie && ((mie_mtie && mip_mtip) || (mie_meie && mip_meip));
+    wire [31:0] irq_cause = (mie_meie && mip_meip) ? CAUSE_IRQ_EXT : CAUSE_IRQ_TIMER;
+    wire has_handler = (mtvec[31:2] != 30'd0);
 
     always @* begin
         alu_op = ALU_ADD;
@@ -177,11 +240,25 @@ module rv32_core_multicycle (
         end
     endfunction
 
-    task enter_trap;
+    // Vectored trap: mepc = pc (faulting/interrupted instr), jump to mtvec.
+    // With no handler installed (mtvec == 0) it degrades to a fatal halt so a
+    // runaway program is still visible on the trap LED.
+    task do_trap;
+        input [31:0] cause;
         begin
-            trap <= 1'b1;
-            state <= S_TRAP;
-            wb_we <= 1'b0;
+            if (has_handler) begin
+                mepc         <= pc;
+                mcause       <= cause;
+                mstatus_mpie <= mstatus_mie;
+                mstatus_mie  <= 1'b0;
+                pc           <= {mtvec[31:2], 2'b0};
+                state        <= S_FETCH;
+                wb_we        <= 1'b0;
+            end else begin
+                trap  <= 1'b1;
+                state <= S_TRAP;
+                wb_we <= 1'b0;
+            end
         end
     endtask
 
@@ -197,6 +274,14 @@ module rv32_core_multicycle (
             wb_data <= 32'h0000_0000;
             wb_we <= 1'b0;
             trap <= 1'b0;
+            mstatus_mie <= 1'b0;
+            mstatus_mpie <= 1'b0;
+            mie_mtie <= 1'b0;
+            mie_meie <= 1'b0;
+            mtvec <= 32'h0000_0000;
+            mepc <= 32'h0000_0000;
+            mcause <= 32'h0000_0000;
+            mscratch <= 32'h0000_0000;
         end else begin
             case (state)
                 S_FETCH: begin
@@ -208,7 +293,16 @@ module rv32_core_multicycle (
                 end
 
                 S_DECODE: begin
-                    state <= S_EXEC;
+                    // Take an asynchronous interrupt here, at the instruction
+                    // boundary: pc still points at the just-fetched (not yet
+                    // executed) instruction, so mepc = pc is precise, and the
+                    // instruction is discarded. Entering from S_DECODE also
+                    // guarantees a clean BRAM re-fetch (mem_valid was low this
+                    // cycle), which taking it in S_FETCH would not.
+                    if (irq_pending && has_handler)
+                        do_trap(irq_cause);
+                    else
+                        state <= S_EXEC;
                 end
 
                 S_EXEC: begin
@@ -246,7 +340,7 @@ module rv32_core_multicycle (
                                 pc <= (rs1_rdata + imm_i) & 32'hffff_fffe;
                                 state <= S_WB;
                             end else begin
-                                enter_trap();
+                                do_trap(CAUSE_ILLEGAL);
                             end
                         end
 
@@ -266,7 +360,7 @@ module rv32_core_multicycle (
                                 wb_we <= (rd != 5'd0);
                                 state <= S_MEM;
                             end else begin
-                                enter_trap();
+                                do_trap(CAUSE_ILLEGAL);
                             end
                         end
 
@@ -278,7 +372,7 @@ module rv32_core_multicycle (
                                 wb_we <= 1'b0;
                                 state <= S_MEM;
                             end else begin
-                                enter_trap();
+                                do_trap(CAUSE_ILLEGAL);
                             end
                         end
 
@@ -289,7 +383,7 @@ module rv32_core_multicycle (
                                 pc <= pc + 32'd4;
                                 state <= S_WB;
                             end else begin
-                                enter_trap();
+                                do_trap(CAUSE_ILLEGAL);
                             end
                         end
 
@@ -300,12 +394,53 @@ module rv32_core_multicycle (
                                 pc <= pc + 32'd4;
                                 state <= S_WB;
                             end else begin
-                                enter_trap();
+                                do_trap(CAUSE_ILLEGAL);
+                            end
+                        end
+
+                        OPCODE_SYSTEM: begin
+                            if (funct3 == 3'b000) begin
+                                case (csr_addr)
+                                    12'h000: do_trap(CAUSE_ECALL_M); // ecall
+                                    12'h001: do_trap(CAUSE_BREAK);   // ebreak
+                                    12'h302: begin                   // mret
+                                        mstatus_mie  <= mstatus_mpie;
+                                        mstatus_mpie <= 1'b1;
+                                        pc           <= {mepc[31:2], 2'b0};
+                                        state        <= S_WB;
+                                    end
+                                    default: do_trap(CAUSE_ILLEGAL);
+                                endcase
+                            end else if (funct3 == 3'b100) begin
+                                do_trap(CAUSE_ILLEGAL);
+                            end else begin
+                                // csrrw/csrrs/csrrc[i]: rd <- old, CSR <- new.
+                                wb_data <= csr_old;
+                                wb_we <= (rd != 5'd0);
+                                if (csr_we) begin
+                                    case (csr_addr)
+                                        CSR_MSTATUS: begin
+                                            mstatus_mie  <= csr_new[3];
+                                            mstatus_mpie <= csr_new[7];
+                                        end
+                                        CSR_MIE: begin
+                                            mie_mtie <= csr_new[7];
+                                            mie_meie <= csr_new[11];
+                                        end
+                                        CSR_MTVEC:    mtvec    <= csr_new;
+                                        CSR_MSCRATCH: mscratch <= csr_new;
+                                        CSR_MEPC:     mepc     <= csr_new;
+                                        CSR_MCAUSE:   mcause   <= csr_new;
+                                        default: begin end
+                                    endcase
+                                end
+                                pc <= pc + 32'd4;
+                                state <= S_WB;
                             end
                         end
 
                         default: begin
-                            enter_trap();
+                            do_trap(CAUSE_ILLEGAL);
                         end
                     endcase
                 end
@@ -329,7 +464,7 @@ module rv32_core_multicycle (
                 end
 
                 default: begin
-                    enter_trap();
+                    do_trap(CAUSE_ILLEGAL);
                 end
             endcase
         end
